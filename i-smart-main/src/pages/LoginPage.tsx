@@ -38,7 +38,7 @@ const LoginPage: React.FC = () => {
         setError(data.message || "Login failed");
       }
     } catch {
-      setError("Something went wrong. Try again.");
+      setError("Something went wrong!!. Try again.");
     } finally {
       setLoading(false);
     }
