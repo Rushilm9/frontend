@@ -1,8 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BASE_URL } from "../utils/constant";
-// ✅ Base API URL (change here only)
-// const BASE_URL = "https://i-smart-backend.vercel.app";
 
 interface LoginForm {
   email: string;
@@ -44,6 +42,10 @@ const LoginPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleTestCredentials = () => {
+    setForm({ email: "aws@gmail.com", password: "aws333" });
   };
 
   return (
@@ -92,17 +94,16 @@ const LoginPage: React.FC = () => {
           >
             {loading ? "Logging in..." : "Login"}
           </button>
-        </form>
 
-        <p className="text-sm text-center text-gray-600 mt-4">
-          Don’t have an account?{" "}
+          {/* ✅ Test Credentials Button */}
           <button
-            onClick={() => navigate("/signup")}
-            className="text-blue-600 hover:underline"
+            type="button"
+            onClick={handleTestCredentials}
+            className="w-full mt-2 bg-gray-100 text-blue-700 py-2 rounded-lg border border-gray-300 hover:bg-gray-200 transition-colors"
           >
-            Sign up
+            Use Test Credentials
           </button>
-        </p>
+        </form>
       </div>
     </div>
   );
