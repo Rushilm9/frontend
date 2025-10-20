@@ -33,7 +33,7 @@ const LoginPage: React.FC = () => {
       if (res.ok) {
         localStorage.setItem("user", JSON.stringify(data.user));
         localStorage.setItem("loginSuccess", "true");
-        navigate("/app");
+        navigate("/app/projects");
       } else {
         setError(data.message || "Login failed");
       }

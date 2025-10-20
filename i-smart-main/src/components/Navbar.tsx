@@ -16,17 +16,27 @@ const Navbar: React.FC = () => {
   const [showProfile, setShowProfile] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
 
-  // ✅ Fetch projects from localStorage & update dynamically
+  // ✅ Load projects from localStorage & set default project if not selected
   useEffect(() => {
     const updateProjects = () => {
-      setProjects(JSON.parse(localStorage.getItem("projects") || "[]"));
+      const storedProjects = JSON.parse(localStorage.getItem("projects") || "[]");
+      setProjects(storedProjects);
+
+      // 🔹 Automatically select first project if none selected
+      const selectedProjectId = localStorage.getItem("selectedProjectId");
+      if (!selectedProjectId && storedProjects.length > 0) {
+        const firstId = storedProjects[0].project_id;
+        localStorage.setItem("selectedProjectId", firstId);
+        window.dispatchEvent(new Event("projectChanged"));
+      }
     };
+
     updateProjects();
     window.addEventListener("projectsUpdated", updateProjects);
     return () => window.removeEventListener("projectsUpdated", updateProjects);
   }, []);
 
-  // ✅ Close profile card when clicked outside
+  // ✅ Close profile popup when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
@@ -41,10 +51,10 @@ const Navbar: React.FC = () => {
   const handleProjectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selectedId = e.target.value;
     localStorage.setItem("selectedProjectId", selectedId);
-
-    // 🔄 Dispatch event for other components (like UploadDocumentsPage)
     window.dispatchEvent(new Event("projectChanged"));
   };
+
+  const selectedProjectId = localStorage.getItem("selectedProjectId") || "";
 
   return (
     <nav className="bg-white border-b border-gray-200 fixed w-full z-30 top-0 shadow-sm">
@@ -67,7 +77,7 @@ const Navbar: React.FC = () => {
               <select
                 className="appearance-none border border-gray-300 rounded-lg px-4 py-2 text-sm font-medium text-gray-700 bg-white hover:border-blue-400 focus:ring-2 focus:ring-blue-500 focus:outline-none cursor-pointer pr-8"
                 onChange={handleProjectChange}
-                value={localStorage.getItem("selectedProjectId") || ""}
+                value={selectedProjectId}
               >
                 <option value="">Select Project</option>
                 {projects.map((proj) => (
