@@ -25,7 +25,7 @@ type ReviewResponse = {
   semantic_patterns?: string[];
   created_at?: string;
   message?: string;
-  title?: string; // optional title if available
+  title?: string;
 };
 
 const LiteratureDetailPage: React.FC = () => {
@@ -34,21 +34,14 @@ const LiteratureDetailPage: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [review, setReview] = useState<ReviewResponse | null>(null);
-  const [filePath, setFilePath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // action states
   const [deleting, setDeleting] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // custom delete modal flag
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
-  // Try to get project id from localStorage to find file path (optional)
-  const projectId = Number(localStorage.getItem("selectedProjectId") || 0);
-
-  // ref to the printable part of the page
   const printableRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -60,7 +53,7 @@ const LiteratureDetailPage: React.FC = () => {
           headers: { accept: "application/json" },
         });
         if (!res.ok) {
-          const text = await res.text();
+          const text = await res.text().catch(() => "");
           throw new Error(`Server returned ${res.status}: ${text}`);
         }
         const data = await res.json();
@@ -73,27 +66,8 @@ const LiteratureDetailPage: React.FC = () => {
       }
     };
 
-    const fetchFilePath = async (id: number) => {
-      if (!projectId) return;
-      try {
-        const res = await fetch(`${BASE_URL}/literature/project/${projectId}/papers`, {
-          headers: { accept: "application/json" },
-        });
-        const data = await res.json();
-        if (res.ok && data?.papers) {
-          const found = (data.papers as any[]).find((p) => String(p.paper_id) === String(id));
-          if (found?.file_path) setFilePath(found.file_path);
-        }
-      } catch (err) {
-        console.warn("Could not fetch file path", err);
-      }
-    };
-
-    if (paperId) {
-      fetchReview(paperId);
-      fetchFilePath(Number(paperId));
-    }
-  }, [paperId, projectId]);
+    if (paperId) fetchReview(paperId);
+  }, [paperId]);
 
   // Delete handler that calls API
   const performDelete = async () => {
@@ -116,7 +90,6 @@ const LiteratureDetailPage: React.FC = () => {
       setSuccessMessage(data?.message ?? "Paper deleted.");
       setShowDeleteModal(false);
 
-      // navigate back to list (user-friendly)
       navigate("/app/literature");
     } catch (err: any) {
       console.error("Delete error:", err);
@@ -142,13 +115,7 @@ const LiteratureDetailPage: React.FC = () => {
       });
 
       const imgData = canvas.toDataURL("image/png");
-
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "mm",
-        format: "a4",
-      });
-
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
 
@@ -179,7 +146,6 @@ const LiteratureDetailPage: React.FC = () => {
     }
   };
 
-  // New back action: prefer history back, otherwise go to literature list
   const handleBack = () => {
     if (window.history.length > 1) {
       navigate(-1);
@@ -210,7 +176,6 @@ const LiteratureDetailPage: React.FC = () => {
     <div className="pt-20 p-6 space-y-6">
       <div className="flex justify-between items-start">
         <div className="flex items-start gap-4">
-          {/* BACK LINK BUTTON */}
           <button
             onClick={handleBack}
             aria-label="Back"
@@ -231,16 +196,13 @@ const LiteratureDetailPage: React.FC = () => {
         </div>
 
         <div className="text-right flex items-center gap-3">
-          {filePath && (
-            <a
-              href={`${BASE_URL}/${filePath.replace(/\\/g, "/")}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-blue-700"
-            >
-              <Download className="h-4 w-4" /> Download original
-            </a>
-          )}
+          {/* New: direct raw download API (no need to look up file_path) */}
+          <a
+            href={`${BASE_URL}/literature/paper/${review.paper_id}/download`}
+            className="inline-flex items-center gap-2 text-blue-700"
+          >
+            <Download className="h-4 w-4" /> Download original
+          </a>
 
           <button
             onClick={handleDownloadPdf}
@@ -264,9 +226,7 @@ const LiteratureDetailPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Show success / error */}
       {successMessage && <div className="text-green-600">{successMessage}</div>}
-      {error && <div className="text-red-600">{error}</div>}
 
       {/* Printable area */}
       <div ref={printableRef} className="space-y-6">
@@ -359,7 +319,7 @@ const LiteratureDetailPage: React.FC = () => {
         </Link>
       </div>
 
-      {/* DELETE CONFIRMATION MODAL (styled) */}
+      {/* DELETE CONFIRMATION MODAL */}
       {showDeleteModal && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
           <div className="bg-white w-full max-w-sm rounded-xl shadow-lg p-6 text-center">

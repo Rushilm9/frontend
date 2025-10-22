@@ -3,18 +3,24 @@ import { Loader2, Download, Eye, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
 import { BASE_URL } from "../utils/constant";
 
-type LitPaper = {
+type Analysis = {
+  analysis_id: number;
+  created_at?: string;
+};
+
+type LitPaperReviewed = {
   paper_id: number;
+  project_id: number;
   title: string;
+  publication_year?: number;
   file_type?: string;
   file_path?: string;
-  has_review?: boolean;
-  created_at?: string;
+  analysis?: Analysis;
 };
 
 const LiteratureListPage: React.FC = () => {
   const [projectId, setProjectId] = useState<number | null>(null);
-  const [papers, setPapers] = useState<LitPaper[]>([]);
+  const [papers, setPapers] = useState<LitPaperReviewed[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string>("Fetching literature papers...");
 
@@ -24,24 +30,36 @@ const LiteratureListPage: React.FC = () => {
     else setStatusMsg("⚠️ No project selected.");
   }, []);
 
-  const fetchLiteraturePapers = async (id: number) => {
+  // Prefer the new endpoint that returns only papers WITH reviews.
+  // If a backend ships the typo-alias, we fall back to it automatically.
+  const fetchReviewedPapers = async (id: number) => {
     setLoading(true);
-    setStatusMsg("⚙️ Fetching literature papers...");
+    setStatusMsg("⚙️ Fetching reviewed papers...");
     try {
-      const res = await fetch(`${BASE_URL}/literature/project/${id}/papers`, {
+      let res = await fetch(`${BASE_URL}/literature/literature-review-fetch?project_id=${id}`, {
         headers: { accept: "application/json" },
       });
-      const data = await res.json();
-      if (res.ok && data?.papers) {
-        setPapers(data.papers);
-        setStatusMsg(`✅ Loaded ${data.papers.length} literature items.`);
+
+      // Fallback to alias if 404/405
+      if (!res.ok && (res.status === 404 || res.status === 405)) {
+        res = await fetch(`${BASE_URL}/literature/litertaure-reiew-rftech?project_id=${id}`, {
+          headers: { accept: "application/json" },
+        });
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.papers_with_reviews) {
+        setPapers(data.papers_with_reviews);
+        setStatusMsg(`✅ Loaded ${data.papers_with_reviews.length} reviewed item(s).`);
       } else {
-        setStatusMsg("⚠️ No literature papers found for this project.");
+        // If this endpoint isn't available, optionally fall back to listing all papers:
         setPapers([]);
+        setStatusMsg("⚠️ No reviewed papers found for this project.");
       }
     } catch (err) {
       console.error(err);
-      setStatusMsg("❌ Failed to load literature papers.");
+      setStatusMsg("❌ Failed to load reviewed papers.");
+      setPapers([]);
     } finally {
       setLoading(false);
     }
@@ -49,12 +67,12 @@ const LiteratureListPage: React.FC = () => {
 
   useEffect(() => {
     if (!projectId) return;
-    fetchLiteraturePapers(projectId);
+    fetchReviewedPapers(projectId);
 
     // refresh when other components emit an update
     const onChanged = (e: Event) => {
       const detail: any = (e as CustomEvent).detail;
-      if (!detail || detail.projectId === projectId) fetchLiteraturePapers(projectId);
+      if (!detail || detail.projectId === projectId) fetchReviewedPapers(projectId);
     };
     window.addEventListener("projectLiteratureChanged", onChanged);
     return () => window.removeEventListener("projectLiteratureChanged", onChanged);
@@ -62,15 +80,14 @@ const LiteratureListPage: React.FC = () => {
 
   const sorted = useMemo(() => {
     return [...papers].sort((a, b) => {
-      if (a.created_at && b.created_at) {
-        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-      }
+      const da = a.analysis?.created_at ? new Date(a.analysis.created_at).getTime() : 0;
+      const db = b.analysis?.created_at ? new Date(b.analysis.created_at).getTime() : 0;
+      if (db !== da) return db - da;
       return (b.paper_id || 0) - (a.paper_id || 0);
     });
   }, [papers]);
 
   return (
-    // PT added so content sits below fixed header — adjust pt-20 if you need more/less
     <div className="pt-20 p-6 space-y-6">
       <div className="flex justify-between items-center">
         <div>
@@ -78,7 +95,6 @@ const LiteratureListPage: React.FC = () => {
           <p className="text-sm text-gray-500">{statusMsg}</p>
         </div>
 
-        {/* Upload button always visible on this page */}
         <div>
           <Link
             to="/app/literature/upload"
@@ -103,25 +119,21 @@ const LiteratureListPage: React.FC = () => {
             <div key={p.paper_id} className="p-4 bg-white border rounded-lg flex justify-between items-start">
               <div>
                 <h3 className="text-lg font-semibold">{p.title}</h3>
-                <div className="text-xs text-gray-500 mt-1">ID: {p.paper_id} • Type: {p.file_type || "PDF"}</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  ID: {p.paper_id} • {p.file_type || "PDF"} {p.publication_year ? `• ${p.publication_year}` : ""}
+                </div>
               </div>
 
               <div className="flex flex-col items-end gap-2">
-                {p.file_path && (
-                  <a
-                    href={`${BASE_URL}/${p.file_path.replace(/\\/g, "/")}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-blue-700 flex items-center gap-1"
-                  >
-                    <Download className="h-4 w-4" /> Download
-                  </a>
-                )}
-
-                <Link
-                  to={`/app/literature/${p.paper_id}`}
+                {/* New: direct raw download API */}
+                <a
+                  href={`${BASE_URL}/literature/paper/${p.paper_id}/download`}
                   className="text-sm text-blue-700 flex items-center gap-1"
                 >
+                  <Download className="h-4 w-4" /> Download
+                </a>
+
+                <Link to={`/app/literature/${p.paper_id}`} className="text-sm text-blue-700 flex items-center gap-1">
                   <Eye className="h-4 w-4" /> View more
                 </Link>
               </div>

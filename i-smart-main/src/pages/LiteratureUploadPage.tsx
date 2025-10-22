@@ -6,11 +6,8 @@ import {
   X,
   CheckCircle,
   Eye,
-  Download,
-  Sparkles,
   Trash2,
   CloudLightning,
-  CircleDashed,
   RotateCw,
   UploadCloud,
   ArrowLeft,
@@ -41,8 +38,7 @@ type UploadItem = {
 
 /* --- Helpers --- */
 const makeId = (f: File) => `${Date.now()}-${Math.floor(Math.random() * 10000)}-${f.name}`;
-
-const CONCURRENCY = 3; // adjust if you want fewer/more simultaneous uploads
+const CONCURRENCY = 3;
 
 /* --- Component --- */
 const LiteratureUploadPage: React.FC = () => {
@@ -52,6 +48,7 @@ const LiteratureUploadPage: React.FC = () => {
   const [items, setItems] = useState<UploadItem[]>([]);
   const [results, setResults] = useState<UploadResult[]>([]);
   const [alertMsg, setAlertMsg] = useState<string | null>(null);
+
   const activeCountRef = useRef(0);
   const queueRef = useRef<UploadItem[]>([]);
   const abortMapRef = useRef<Record<string, XMLHttpRequest | null>>({});
@@ -119,7 +116,7 @@ const LiteratureUploadPage: React.FC = () => {
       result: null,
     }));
 
-    // dedupe by name+size to avoid double-adds
+    // dedupe by name+size
     setItems((prev) => {
       const existingKeys = new Set(prev.map((p) => `${p.file.name}-${p.file.size}`));
       const filtered = newItems.filter((n) => !existingKeys.has(`${n.file.name}-${n.file.size}`));
@@ -133,7 +130,6 @@ const LiteratureUploadPage: React.FC = () => {
 
   /* --- queue / concurrency --- */
   const tickQueue = () => {
-    // start uploads while we have capacity
     while (activeCountRef.current < CONCURRENCY && queueRef.current.length > 0) {
       const next = queueRef.current.shift()!;
       startUpload(next);
@@ -141,7 +137,6 @@ const LiteratureUploadPage: React.FC = () => {
   };
 
   const startUpload = (item: UploadItem) => {
-    // safety: get up-to-date item object (it might have been removed)
     setItems((prev) =>
       prev.map((p) => (p.id === item.id ? { ...p, status: "uploading", progress: 0, message: null } : p))
     );
@@ -152,13 +147,14 @@ const LiteratureUploadPage: React.FC = () => {
     if (!projectId) {
       setAlertMsg("⚠️ Select a project first.");
       finishUploadSlot(item.id);
-      setItems((prev) => prev.map((p) => (p.id === item.id ? { ...p, status: "error", message: "No project selected" } : p)));
+      setItems((prev) =>
+        prev.map((p) => (p.id === item.id ? { ...p, status: "error", message: "No project selected" } : p))
+      );
       return;
     }
 
     const formData = new FormData();
-    formData.append("user_id", "120001");
-    formData.append("project_id", `${projectId}`);
+    // API sheet only requires repeated "files" (no user_id needed)
     formData.append("files", item.file, item.file.name);
 
     const xhr = new XMLHttpRequest();
@@ -178,7 +174,11 @@ const LiteratureUploadPage: React.FC = () => {
       if (xhr.status === 200) {
         try {
           const data = JSON.parse(xhr.responseText);
-          const newResults: UploadResult[] = Array.isArray(data.results) ? data.results : data.results ? [data.results] : [];
+          const newResults: UploadResult[] = Array.isArray(data.results)
+            ? data.results
+            : data.results
+            ? [data.results]
+            : [];
           const resForThis = newResults[0] ?? null;
 
           setItems((prev) =>
@@ -197,17 +197,27 @@ const LiteratureUploadPage: React.FC = () => {
 
           if (resForThis) {
             setResults((prev) => [resForThis, ...prev]);
-            window.dispatchEvent(new CustomEvent("projectLiteratureChanged", { detail: { projectId } }));
+            window.dispatchEvent(
+              new CustomEvent("projectLiteratureChanged", { detail: { projectId } })
+            );
             setAlertMsg("✅ Upload complete. Analysis stored.");
           } else {
             setAlertMsg("⚠️ Upload finished but no analysis returned.");
           }
-        } catch (err) {
-          setItems((prev) => prev.map((p) => (p.id === item.id ? { ...p, status: "error", message: "Could not parse server response" } : p)));
+        } catch {
+          setItems((prev) =>
+            prev.map((p) =>
+              p.id === item.id ? { ...p, status: "error", message: "Could not parse server response" } : p
+            )
+          );
           setAlertMsg("❌ Could not parse server response.");
         }
       } else {
-        setItems((prev) => prev.map((p) => (p.id === item.id ? { ...p, status: "error", message: `Upload failed (${xhr.status})` } : p)));
+        setItems((prev) =>
+          prev.map((p) =>
+            p.id === item.id ? { ...p, status: "error", message: `Upload failed (${xhr.status})` } : p
+          )
+        );
         setAlertMsg(`❌ Upload failed: ${xhr.status}`);
       }
       finishUploadSlot(item.id);
@@ -226,7 +236,6 @@ const LiteratureUploadPage: React.FC = () => {
       finishUploadSlot(item.id);
     };
 
-    // store xhr reference in state for optional UI usage
     setItems((prev) => prev.map((p) => (p.id === item.id ? { ...p, xhr } : p)));
     xhr.send(formData);
   };
@@ -240,7 +249,7 @@ const LiteratureUploadPage: React.FC = () => {
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length) {
       addFiles(Array.from(e.target.files));
-      e.currentTarget.value = ""; // reset input so same file can be re-added if wanted
+      e.currentTarget.value = "";
     }
   };
 
@@ -283,7 +292,7 @@ const LiteratureUploadPage: React.FC = () => {
     }
   };
 
-  /* --- small UI subcomponent: UploadCard --- */
+  /* --- subcomponent --- */
   const UploadCard: React.FC<{ item: UploadItem }> = ({ item }) => {
     return (
       <div className="p-4 border rounded-lg flex justify-between items-start bg-white shadow-sm">
@@ -354,11 +363,9 @@ const LiteratureUploadPage: React.FC = () => {
                 </button>
               </>
             ) : (
-              // queued / idle
               <>
                 <button
                   onClick={() => {
-                    // start this one immediately by enqueuing only this item
                     queueRef.current.push(item);
                     tickQueue();
                   }}
@@ -396,17 +403,15 @@ const LiteratureUploadPage: React.FC = () => {
   return (
     <div className="pt-20 p-6 space-y-6 relative">
       {/* Back button */}
-      {/* move back button down and keep it above other fixed elements */}
-<div className="absolute left-6 top-12 z-50">
-  <button
-    onClick={goBack}
-    aria-label="Go back"
-    className="inline-flex items-center gap-2 text-sm text-gray-700 bg-white/90 backdrop-blur-sm px-3 py-2 rounded-md border hover:shadow-sm"
-  >
-    <ArrowLeft className="h-4 w-4" /> Back
-  </button>
-</div>
-
+      <div className="absolute left-6 top-12 z-50">
+        <button
+          onClick={goBack}
+          aria-label="Go back"
+          className="inline-flex items-center gap-2 text-sm text-gray-700 bg-white/90 backdrop-blur-sm px-3 py-2 rounded-md border hover:shadow-sm"
+        >
+          <ArrowLeft className="h-4 w-4" /> Back
+        </button>
+      </div>
 
       {alertMsg && (
         <div className="fixed bottom-6 right-6 bg-blue-700 text-white px-4 py-3 rounded-lg shadow-lg text-sm animate-fadeIn z-50">
@@ -458,7 +463,6 @@ const LiteratureUploadPage: React.FC = () => {
               <div className="text-xs text-gray-500 mt-2">or drop files here</div>
             </div>
 
-            {/* quick info */}
             <div className="mt-3 text-xs text-gray-500 flex items-center gap-2">
               <UploadCloud className="h-4 w-4" /> <span>Max file size enforced by backend. Supported: PDF, DOCX, TXT, etc.</span>
             </div>
@@ -508,7 +512,7 @@ const LiteratureUploadPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Upload results (previous + new) */}
+      {/* Upload results */}
       <div>
         <h3 className="text-lg font-semibold mb-3">Upload results</h3>
         <div className="space-y-3">

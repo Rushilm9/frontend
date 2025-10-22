@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Plus,
   FileText,
@@ -6,12 +6,26 @@ import {
   CheckCircle,
   X,
   Sparkles,
-  Download,
 } from "lucide-react";
 import { BASE_URL } from "../utils/constant";
 
+type Project = {
+  project_id: number;
+  project_name?: string;
+  project_desc?: string;
+  raw_query?: string;
+};
+
+type ProjectStats = {
+  project_id: number;
+  project_name: string;
+  total_papers: number;
+  analyzed_papers: number;
+  unanalyzed_papers: number;
+};
+
 const UploadDocumentsPage: React.FC = () => {
-  const [project, setProject] = useState<any>(null);
+  const [project, setProject] = useState<Project | null>(null);
   const [prompt, setPrompt] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
@@ -29,12 +43,80 @@ const UploadDocumentsPage: React.FC = () => {
   const [isIngesting, setIsIngesting] = useState(false);
   const [ingestResult, setIngestResult] = useState<any | null>(null);
 
+  // staged loader state (UI shows only label + bar)
+  const [ingestProgress, setIngestProgress] = useState(0); // 0..100
+  const [stageLabel, setStageLabel] = useState<string>("");
+
+  const tickRef = useRef<number | null>(null);
+  const startTsRef = useRef<number | null>(null);
+
   // ingest form fields
   const [ingestLimit, setIngestLimit] = useState<number | "">("");
   const [minCitations, setMinCitations] = useState<number | "">("");
   const [yearMin, setYearMin] = useState<number | "">("");
   const [yearMax, setYearMax] = useState<number | "">("");
   const [quartileIn, setQuartileIn] = useState<string>("");
+
+  // project stats
+  const [stats, setStats] = useState<ProjectStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsErr, setStatsErr] = useState<string | null>(null);
+
+  // ---------------------------
+  // Staged loader (no seconds shown in UI)
+  // Timings: 0–36 fetch, 36–45 AI, 45–54 authors, 54+ finalizing
+  // ---------------------------
+  const TOTAL_SECONDS = 54;
+
+  const clearStagedTimer = () => {
+    if (tickRef.current) {
+      window.clearInterval(tickRef.current);
+      tickRef.current = null;
+    }
+    startTsRef.current = null;
+  };
+
+  const startStagedLoader = () => {
+    clearStagedTimer();
+    setIngestProgress(0);
+    setStageLabel("Fetching papers…");
+    startTsRef.current = Date.now();
+
+    tickRef.current = window.setInterval(() => {
+      if (!startTsRef.current) return;
+      const elapsed = (Date.now() - startTsRef.current) / 1000; // seconds
+
+      // map 0..TOTAL_SECONDS -> 0..100 (cap after)
+      const pct = Math.max(
+        0,
+        Math.min(100, Math.round((elapsed / TOTAL_SECONDS) * 100))
+      );
+      setIngestProgress(pct);
+
+      if (elapsed < 36) {
+        setStageLabel("Fetching papers…");
+      } else if (elapsed < 54) {
+        setStageLabel("AI recommendations showing up…");
+      } else if (elapsed < 60) {
+        setStageLabel("Top authors being identified…");
+      } else {
+        setStageLabel("Finalizing & saving results…");
+        setIngestProgress(100);
+      }
+    }, 200);
+  };
+
+  const stopStagedLoader = () => {
+    clearStagedTimer();
+    setIngestProgress(100);
+    setStageLabel("Completed.");
+  };
+
+  useEffect(() => {
+    return () => {
+      clearStagedTimer();
+    };
+  }, []);
 
   // ---------------------------
   // Fetch project data
@@ -68,6 +150,29 @@ const UploadDocumentsPage: React.FC = () => {
   };
 
   // ---------------------------
+  // Fetch project stats
+  // ---------------------------
+  const fetchProjectStats = async (projectId: number) => {
+    try {
+      setStatsErr(null);
+      setStatsLoading(true);
+      const res = await fetch(`${BASE_URL}/papers/stats/project/${projectId}`, {
+        method: "GET",
+        headers: { accept: "application/json" },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail || "Failed to fetch stats");
+      setStats(data as ProjectStats);
+    } catch (e: any) {
+      console.error(e);
+      setStatsErr(e?.message || "Could not load stats");
+      setStats(null);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  // ---------------------------
   // Load selected project
   // ---------------------------
   useEffect(() => {
@@ -82,6 +187,7 @@ const UploadDocumentsPage: React.FC = () => {
         setProject(selected);
         if (selected.raw_query) setPrompt(selected.raw_query);
         fetchProjectData(selected.project_id);
+        fetchProjectStats(selected.project_id);
       } else {
         setAlertMsg("⚠️ No project selected. Please go back and select one.");
       }
@@ -100,6 +206,7 @@ const UploadDocumentsPage: React.FC = () => {
         setProject(selected);
         setPrompt(selected.raw_query || "");
         fetchProjectData(selected.project_id);
+        fetchProjectStats(selected.project_id);
         setAlertMsg(`📁 Switched to project: ${selected.project_name}`);
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
@@ -128,7 +235,7 @@ const UploadDocumentsPage: React.FC = () => {
 
       const formData = new FormData();
       formData.append("user_id", "120001");
-      formData.append("project_id", project.project_id);
+      formData.append("project_id", String(project.project_id));
       formData.append("prompt", prompt || "");
       formData.append("files", selectedFile);
 
@@ -148,6 +255,7 @@ const UploadDocumentsPage: React.FC = () => {
           setStatus("done");
           setAlertMsg("✅ Document uploaded and analyzed successfully!");
           await fetchProjectData(project.project_id);
+          fetchProjectStats(project.project_id);
         } else {
           setStatus("error");
           setAlertMsg("❌ Upload failed. Try again.");
@@ -196,7 +304,7 @@ const UploadDocumentsPage: React.FC = () => {
 
       const formData = new FormData();
       formData.append("user_id", "120001");
-      formData.append("project_id", project.project_id);
+      formData.append("project_id", String(project.project_id));
       formData.append("prompt", prompt);
       if (file) formData.append("files", file);
 
@@ -233,7 +341,7 @@ const UploadDocumentsPage: React.FC = () => {
   };
 
   // ---------------------------
-  // Ingest handler (with loader + redirect)
+  // Ingest handler (with staged loader + redirect)
   // ---------------------------
   const handleStartIngest = async () => {
     if (!project) {
@@ -243,7 +351,8 @@ const UploadDocumentsPage: React.FC = () => {
 
     setIsIngesting(true);
     setIngestResult(null);
-    setAlertMsg("🔎 Starting paper ingestion...");
+    setAlertMsg("🔎 Starting paper ingestion…");
+    startStagedLoader();
 
     try {
       const params = new URLSearchParams();
@@ -281,10 +390,14 @@ const UploadDocumentsPage: React.FC = () => {
         setAlertMsg(`❌ Ingest error: ${String(detail)}`);
         setIngestResult({ error: detail });
       } else {
-        setAlertMsg("✅ Ingest finished. Redirecting...");
+        setAlertMsg("✅ Ingest finished. Redirecting…");
         setIngestResult(payload);
+        stopStagedLoader();
 
-        // ✅ Redirect after short delay
+        // refresh stats
+        fetchProjectStats(project.project_id);
+
+        // Redirect shortly
         setTimeout(() => {
           window.location.href = "http://localhost:5173/app/papers";
         }, 1000);
@@ -296,13 +409,14 @@ const UploadDocumentsPage: React.FC = () => {
       setIngestResult({ error: msg });
     } finally {
       setIsIngesting(false);
+      // if API keeps running, loader keeps showing “Finalizing…” once it hits 54s
     }
   };
 
   const canGenerate = (prompt.trim() || file) && !isAnalyzing;
 
   const AlertBox = ({ message }: { message: string }) => (
-    <div className="fixed bottom-6 right-6 bg-blue-700 text-white px-4 py-3 rounded-lg shadow-lg text-sm animate-fadeIn z-50">
+    <div className="fixed bottom-6 right-6 bg-blue-700 text-white px-4 py-3 rounded-lg shadow-lg text-sm animate-fadeIn z-[9999]">
       {message}
     </div>
   );
@@ -332,6 +446,43 @@ const UploadDocumentsPage: React.FC = () => {
               <CheckCircle className="h-4 w-4 text-white mr-2" />
               <span className="text-sm font-medium tracking-wide">Active Project</span>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Project Totals */}
+      {project && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+            <p className="text-xs text-gray-500 mb-1">Total papers</p>
+            <p className="text-2xl font-semibold">
+              {statsLoading ? "…" : stats?.total_papers ?? "—"}
+            </p>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+            <p className="text-xs text-gray-500 mb-1">Analyzed</p>
+            <p className="text-2xl font-semibold text-green-700">
+              {statsLoading ? "…" : stats?.analyzed_papers ?? "—"}
+            </p>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Unanalyzed</p>
+                <p className="text-2xl font-semibold text-amber-700">
+                  {statsLoading ? "…" : stats?.unanalyzed_papers ?? "—"}
+                </p>
+              </div>
+              <button
+                onClick={() => project && fetchProjectStats(project.project_id)}
+                className="text-xs px-3 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-700"
+                disabled={statsLoading}
+                title={statsErr || "Refresh stats"}
+              >
+                {statsLoading ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+            {statsErr && <p className="mt-2 text-xs text-red-600">{statsErr}</p>}
           </div>
         </div>
       )}
@@ -467,17 +618,22 @@ const UploadDocumentsPage: React.FC = () => {
         </div>
       )}
 
-      {/* Ingest Modal */}
+      {/* Ingest Modal (perfectly centered) */}
       {showIngestModal && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-4">
+        <div
+          className="fixed inset-0 z-[1000] flex items-center justify-center p-4 overflow-y-auto"
+          aria-modal="true"
+          role="dialog"
+        >
+          {/* Backdrop */}
           <div
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
             onClick={() => {
               if (!isIngesting) setShowIngestModal(false);
             }}
           />
-
-          <div className="relative max-w-3xl w-full bg-white rounded-xl shadow-xl p-6 z-10">
+          {/* Modal card */}
+          <div className="relative w-full max-w-3xl bg-white rounded-xl shadow-2xl p-6 z-[1001]">
             <div className="flex items-start justify-between mb-4">
               <h4 className="text-lg font-semibold">Ingest discovered papers</h4>
               <button
@@ -553,7 +709,7 @@ const UploadDocumentsPage: React.FC = () => {
                 />
               </label>
 
-              <label className="text-xs text-gray-600">
+              <label className="text-xs text-gray-600 md:col-span-2">
                 Quartile (comma-separated)
                 <input
                   type="text"
@@ -566,14 +722,23 @@ const UploadDocumentsPage: React.FC = () => {
               </label>
             </div>
 
-            {/* Loader / Progress */}
+            {/* Minimal staged loader (no seconds) */}
             {isIngesting && (
-              <div className="mt-6 flex items-center gap-3 text-blue-700 text-sm">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span>Ingesting papers... please wait</span>
+              <div className="mt-6">
+                <div className="flex items-center gap-3 text-blue-700 text-sm mb-2">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <span>{stageLabel}</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-200"
+                    style={{ width: `${ingestProgress}%` }}
+                  />
+                </div>
               </div>
             )}
 
+            {/* Footer */}
             <div className="mt-6 flex justify-end space-x-3">
               <button
                 onClick={() => {
@@ -593,7 +758,7 @@ const UploadDocumentsPage: React.FC = () => {
                 {isIngesting ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Ingesting...</span>
+                    <span>Ingesting…</span>
                   </>
                 ) : (
                   <span>Start Ingest</span>
