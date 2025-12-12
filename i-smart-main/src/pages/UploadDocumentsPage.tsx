@@ -44,7 +44,7 @@ const UploadDocumentsPage: React.FC = () => {
   const [ingestResult, setIngestResult] = useState<any | null>(null);
 
   // staged loader state (UI shows only label + bar)
-  const [ingestProgress, setIngestProgress] = useState(0); // 0..100
+  const [ingestProgress, setIngestProgress] = useState(0);
   const [stageLabel, setStageLabel] = useState<string>("");
 
   const tickRef = useRef<number | null>(null);
@@ -63,8 +63,7 @@ const UploadDocumentsPage: React.FC = () => {
   const [statsErr, setStatsErr] = useState<string | null>(null);
 
   // ---------------------------
-  // Staged loader (no seconds shown in UI)
-  // Timings: 0–36 fetch, 36–45 AI, 45–54 authors, 54+ finalizing
+  // staged loader logic
   // ---------------------------
   const TOTAL_SECONDS = 54;
 
@@ -84,22 +83,14 @@ const UploadDocumentsPage: React.FC = () => {
 
     tickRef.current = window.setInterval(() => {
       if (!startTsRef.current) return;
-      const elapsed = (Date.now() - startTsRef.current) / 1000; // seconds
-
-      // map 0..TOTAL_SECONDS -> 0..100 (cap after)
-      const pct = Math.max(
-        0,
-        Math.min(100, Math.round((elapsed / TOTAL_SECONDS) * 100))
-      );
+      const elapsed = (Date.now() - startTsRef.current) / 1000;
+      const pct = Math.max(0, Math.min(100, Math.round((elapsed / TOTAL_SECONDS) * 100)));
       setIngestProgress(pct);
 
-      if (elapsed < 36) {
-        setStageLabel("Fetching papers…");
-      } else if (elapsed < 54) {
-        setStageLabel("AI recommendations showing up…");
-      } else if (elapsed < 60) {
-        setStageLabel("Top authors being identified…");
-      } else {
+      if (elapsed < 36) setStageLabel("Fetching papers…");
+      else if (elapsed < 54) setStageLabel("AI recommendations showing up…");
+      else if (elapsed < 60) setStageLabel("Top authors being identified…");
+      else {
         setStageLabel("Finalizing & saving results…");
         setIngestProgress(100);
       }
@@ -113,13 +104,32 @@ const UploadDocumentsPage: React.FC = () => {
   };
 
   useEffect(() => {
-    return () => {
-      clearStagedTimer();
-    };
+    return () => clearStagedTimer();
   }, []);
 
   // ---------------------------
-  // Fetch project data
+  // helper: get user_id from localStorage (object or simple key)
+  // ---------------------------
+  const getUserId = (): string | null => {
+    // case 1: saved as plain string
+    const directId = localStorage.getItem("user_id");
+    if (directId) return directId;
+
+    // case 2: saved as JSON object
+    const userRaw = localStorage.getItem("user");
+    if (userRaw) {
+      try {
+        const obj = JSON.parse(userRaw);
+        if (obj && obj.user_id) return String(obj.user_id);
+      } catch (e) {
+        console.warn("Cannot parse stored user:", e);
+      }
+    }
+    return null;
+  };
+
+  // ---------------------------
+  // fetch project data
   // ---------------------------
   const fetchProjectData = async (projectId: number) => {
     try {
@@ -150,7 +160,7 @@ const UploadDocumentsPage: React.FC = () => {
   };
 
   // ---------------------------
-  // Fetch project stats
+  // fetch project stats
   // ---------------------------
   const fetchProjectStats = async (projectId: number) => {
     try {
@@ -173,7 +183,7 @@ const UploadDocumentsPage: React.FC = () => {
   };
 
   // ---------------------------
-  // Load selected project
+  // load selected project
   // ---------------------------
   useEffect(() => {
     const loadProject = () => {
@@ -226,6 +236,12 @@ const UploadDocumentsPage: React.FC = () => {
       return;
     }
 
+    const user_id = getUserId();
+    if (!user_id) {
+      setAlertMsg("⚠️ Please log in first. No user ID found.");
+      return;
+    }
+
     try {
       setFile(selectedFile);
       setStatus("uploading");
@@ -234,7 +250,7 @@ const UploadDocumentsPage: React.FC = () => {
       setAlertMsg("⚙️ Uploading and analyzing document...");
 
       const formData = new FormData();
-      formData.append("user_id", "120001");
+      formData.append("user_id", user_id);
       formData.append("project_id", String(project.project_id));
       formData.append("prompt", prompt || "");
       formData.append("files", selectedFile);
@@ -297,13 +313,19 @@ const UploadDocumentsPage: React.FC = () => {
       return;
     }
 
+    const user_id = getUserId();
+    if (!user_id) {
+      setAlertMsg("⚠️ Please log in first. No user ID found.");
+      return;
+    }
+
     try {
       setIsAnalyzing(true);
       setAlertMsg("⚙️ Analyzing keywords...");
       setKeywords([]);
 
       const formData = new FormData();
-      formData.append("user_id", "120001");
+      formData.append("user_id", user_id);
       formData.append("project_id", String(project.project_id));
       formData.append("prompt", prompt);
       if (file) formData.append("files", file);
@@ -341,7 +363,7 @@ const UploadDocumentsPage: React.FC = () => {
   };
 
   // ---------------------------
-  // Ingest handler (with staged loader + redirect)
+  // Ingest handler
   // ---------------------------
   const handleStartIngest = async () => {
     if (!project) {
@@ -357,20 +379,16 @@ const UploadDocumentsPage: React.FC = () => {
     try {
       const params = new URLSearchParams();
       if (ingestLimit !== "") params.set("limit", String(ingestLimit));
-
-      // defaults
       params.set("pages_per_keyword", "5");
       params.set("inter_batch_delay_ms", "3000");
       params.set("require_abstract", "true");
       params.set("authors_in_background", "true");
       params.set("openalex_enabled", "true");
       params.set("crossref_enabled", "true");
-
       if (minCitations !== "") params.set("min_citations", String(minCitations));
       if (yearMin !== "") params.set("year_min", String(yearMin));
       if (yearMax !== "") params.set("year_max", String(yearMax));
       if (quartileIn.trim() !== "") params.set("quartile_in", quartileIn.trim());
-
       const notify = localStorage.getItem("userEmail") || "";
       if (notify) params.set("notify_user", notify);
 
@@ -386,18 +404,16 @@ const UploadDocumentsPage: React.FC = () => {
       if (!resp.ok) {
         const detail =
           payload?.detail ||
-          (typeof payload === "string" ? payload : JSON.stringify(payload, null, 2));
+          (typeof payload === "string"
+            ? payload
+            : JSON.stringify(payload, null, 2));
         setAlertMsg(`❌ Ingest error: ${String(detail)}`);
         setIngestResult({ error: detail });
       } else {
         setAlertMsg("✅ Ingest finished. Redirecting…");
         setIngestResult(payload);
         stopStagedLoader();
-
-        // refresh stats
         fetchProjectStats(project.project_id);
-
-        // Redirect shortly
         setTimeout(() => {
           window.location.href = "http://localhost:5173/app/papers";
         }, 1000);
@@ -409,7 +425,6 @@ const UploadDocumentsPage: React.FC = () => {
       setIngestResult({ error: msg });
     } finally {
       setIsIngesting(false);
-      // if API keeps running, loader keeps showing “Finalizing…” once it hits 54s
     }
   };
 
@@ -421,6 +436,9 @@ const UploadDocumentsPage: React.FC = () => {
     </div>
   );
 
+  // ---------------------------
+  // JSX Rendering
+  // ---------------------------
   return (
     <div className="space-y-8">
       {alertMsg && <AlertBox message={alertMsg} />}
@@ -439,12 +457,15 @@ const UploadDocumentsPage: React.FC = () => {
                 {project.project_desc || "No description provided."}
               </p>
               <p className="text-blue-200 text-xs mt-2">
-                Project ID: <span className="font-mono">{project.project_id}</span>
+                Project ID:{" "}
+                <span className="font-mono">{project.project_id}</span>
               </p>
             </div>
             <div className="mt-4 sm:mt-0 flex items-center bg-white/20 px-4 py-2 rounded-lg backdrop-blur-sm border border-white/30 shadow-sm">
               <CheckCircle className="h-4 w-4 text-white mr-2" />
-              <span className="text-sm font-medium tracking-wide">Active Project</span>
+              <span className="text-sm font-medium tracking-wide">
+                Active Project
+              </span>
             </div>
           </div>
         </div>
@@ -492,7 +513,9 @@ const UploadDocumentsPage: React.FC = () => {
         {/* Research Prompt */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 flex flex-col justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-gray-900 mb-3">Research Prompt</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-3">
+              Research Prompt
+            </h2>
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
@@ -528,11 +551,18 @@ const UploadDocumentsPage: React.FC = () => {
 
         {/* Upload Documents */}
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 text-center">
-          <h2 className="text-xl font-semibold text-gray-900 mb-3">Upload Documents</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-3">
+            Upload Documents
+          </h2>
 
           {!file ? (
             <>
-              <input id="fileUpload" type="file" className="hidden" onChange={handleFileSelect} />
+              <input
+                id="fileUpload"
+                type="file"
+                className="hidden"
+                onChange={handleFileSelect}
+              />
               <label
                 htmlFor="fileUpload"
                 className="cursor-pointer inline-flex items-center space-x-2 bg-blue-700 hover:bg-blue-800 text-white px-6 py-3 rounded-lg text-sm font-medium transition shadow-sm"
@@ -547,7 +577,9 @@ const UploadDocumentsPage: React.FC = () => {
                 <div className="flex items-center space-x-3">
                   <FileText className="h-6 w-6 text-blue-600" />
                   <div>
-                    <p className="font-medium text-gray-900 text-sm">{file.name}</p>
+                    <p className="font-medium text-gray-900 text-sm">
+                      {file.name}
+                    </p>
                     <p className="text-xs text-gray-500">
                       {(file.size / (1024 * 1024)).toFixed(2)} MB
                     </p>
@@ -618,21 +650,19 @@ const UploadDocumentsPage: React.FC = () => {
         </div>
       )}
 
-      {/* Ingest Modal (perfectly centered) */}
+      {/* Ingest Modal */}
       {showIngestModal && (
         <div
           className="fixed inset-0 z-[1000] flex items-center justify-center p-4 overflow-y-auto"
           aria-modal="true"
           role="dialog"
         >
-          {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
             onClick={() => {
               if (!isIngesting) setShowIngestModal(false);
             }}
           />
-          {/* Modal card */}
           <div className="relative w-full max-w-3xl bg-white rounded-xl shadow-2xl p-6 z-[1001]">
             <div className="flex items-start justify-between mb-4">
               <h4 className="text-lg font-semibold">Ingest discovered papers</h4>
@@ -654,7 +684,9 @@ const UploadDocumentsPage: React.FC = () => {
                   min={1}
                   value={ingestLimit}
                   onChange={(e) =>
-                    setIngestLimit(e.target.value === "" ? "" : Number(e.target.value))
+                    setIngestLimit(
+                      e.target.value === "" ? "" : Number(e.target.value)
+                    )
                   }
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
                   placeholder="optional"
@@ -669,7 +701,9 @@ const UploadDocumentsPage: React.FC = () => {
                   min={0}
                   value={minCitations}
                   onChange={(e) =>
-                    setMinCitations(e.target.value === "" ? "" : Number(e.target.value))
+                    setMinCitations(
+                      e.target.value === "" ? "" : Number(e.target.value)
+                    )
                   }
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
                   placeholder="optional"
@@ -685,7 +719,9 @@ const UploadDocumentsPage: React.FC = () => {
                   max={new Date().getFullYear()}
                   value={yearMin}
                   onChange={(e) =>
-                    setYearMin(e.target.value === "" ? "" : Number(e.target.value))
+                    setYearMin(
+                      e.target.value === "" ? "" : Number(e.target.value)
+                    )
                   }
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
                   placeholder="optional"
@@ -701,7 +737,9 @@ const UploadDocumentsPage: React.FC = () => {
                   max={new Date().getFullYear()}
                   value={yearMax}
                   onChange={(e) =>
-                    setYearMax(e.target.value === "" ? "" : Number(e.target.value))
+                    setYearMax(
+                      e.target.value === "" ? "" : Number(e.target.value)
+                    )
                   }
                   className="mt-1 w-full border rounded px-3 py-2 text-sm"
                   placeholder="optional"
@@ -722,7 +760,6 @@ const UploadDocumentsPage: React.FC = () => {
               </label>
             </div>
 
-            {/* Minimal staged loader (no seconds) */}
             {isIngesting && (
               <div className="mt-6">
                 <div className="flex items-center gap-3 text-blue-700 text-sm mb-2">
@@ -738,7 +775,6 @@ const UploadDocumentsPage: React.FC = () => {
               </div>
             )}
 
-            {/* Footer */}
             <div className="mt-6 flex justify-end space-x-3">
               <button
                 onClick={() => {

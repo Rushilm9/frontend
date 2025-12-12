@@ -28,6 +28,7 @@ const LoginPage: React.FC = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
+
       const data = await res.json();
 
       if (res.ok) {
@@ -38,7 +39,7 @@ const LoginPage: React.FC = () => {
         setError(data.message || "Login failed");
       }
     } catch {
-      setError("Something went wrong!!. Try again.");
+      setError("Something went wrong! Try again.");
     } finally {
       setLoading(false);
     }
@@ -75,6 +76,7 @@ const LoginPage: React.FC = () => {
             required
             className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-600"
           />
+
           <input
             name="password"
             type="password"
@@ -95,7 +97,7 @@ const LoginPage: React.FC = () => {
             {loading ? "Logging in..." : "Login"}
           </button>
 
-          {/* ✅ Test Credentials Button */}
+          {/* Test Credentials */}
           <button
             type="button"
             onClick={handleTestCredentials}
@@ -104,6 +106,17 @@ const LoginPage: React.FC = () => {
             Use Test Credentials
           </button>
         </form>
+
+        {/* 🔹 Signup Redirect */}
+        <p className="text-sm text-center text-gray-600 mt-4">
+          Don&apos;t have an account?{" "}
+          <button
+            onClick={() => navigate("/signup")}
+            className="text-blue-600 hover:underline font-medium"
+          >
+            Sign up
+          </button>
+        </p>
       </div>
     </div>
   );

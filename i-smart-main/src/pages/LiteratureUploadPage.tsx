@@ -143,7 +143,7 @@ const LiteratureUploadPage: React.FC = () => {
 
     activeCountRef.current += 1;
 
-    const projectId = Number(project?.project_id || localStorage.getItem("selectedProjectId") || 0);
+    const projectId = Number(project?.project_id || localStorage.getItem("selectedProjectId") || 111);
     if (!projectId) {
       setAlertMsg("⚠️ Select a project first.");
       finishUploadSlot(item.id);
@@ -154,13 +154,14 @@ const LiteratureUploadPage: React.FC = () => {
     }
 
     const formData = new FormData();
-    // API sheet only requires repeated "files" (no user_id needed)
     formData.append("files", item.file, item.file.name);
 
     const xhr = new XMLHttpRequest();
     abortMapRef.current[item.id] = xhr;
 
-    xhr.open("POST", `${BASE_URL}/literature/project/${projectId}/upload-and-review`);
+    // ✅ EXACT API CALL AS REQUESTED
+    xhr.open("POST", `https://google-ai-backend.onrender.com/literature/project/${projectId}/upload-and-review`);
+    xhr.setRequestHeader("accept", "application/json");
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
@@ -232,7 +233,9 @@ const LiteratureUploadPage: React.FC = () => {
 
     xhr.onabort = () => {
       abortMapRef.current[item.id] = null;
-      setItems((prev) => prev.map((p) => (p.id === item.id ? { ...p, status: "canceled", message: "Canceled by user" } : p)));
+      setItems((prev) =>
+        prev.map((p) => (p.id === item.id ? { ...p, status: "canceled", message: "Canceled by user" } : p))
+      );
       finishUploadSlot(item.id);
     };
 
@@ -322,10 +325,13 @@ const LiteratureUploadPage: React.FC = () => {
                 )}
                 {item.status === "done" && (
                   <>
-                    <span className="text-green-600 font-medium">Done</span> {item.message ? `• ${item.message}` : ""}
+                    <span className="text-green-600 font-medium">Done</span>{" "}
+                    {item.message ? `• ${item.message}` : ""}
                   </>
                 )}
-                {item.status === "error" && <span className="text-red-600">Error • {item.message || "Failed"}</span>}
+                {item.status === "error" && (
+                  <span className="text-red-600">Error • {item.message || "Failed"}</span>
+                )}
                 {item.status === "canceled" && <span className="text-yellow-700">Canceled</span>}
               </div>
             </div>
@@ -336,7 +342,10 @@ const LiteratureUploadPage: React.FC = () => {
           <div className="flex items-center gap-2">
             {item.status === "done" && item.result ? (
               <>
-                <Link to={`/app/literature/${item.result.paper_id}`} className="text-sm text-blue-700 flex items-center gap-2">
+                <Link
+                  to={`/app/literature/${item.result.paper_id}`}
+                  className="text-sm text-blue-700 flex items-center gap-2"
+                >
                   <Eye className="h-4 w-4" /> View
                 </Link>
                 <span className="text-green-600 text-sm font-medium flex items-center gap-1">
@@ -355,10 +364,16 @@ const LiteratureUploadPage: React.FC = () => {
               </>
             ) : item.status === "error" ? (
               <>
-                <button onClick={() => retryItem(item.id)} className="text-sm text-blue-700 hover:underline flex items-center gap-2">
+                <button
+                  onClick={() => retryItem(item.id)}
+                  className="text-sm text-blue-700 hover:underline flex items-center gap-2"
+                >
                   <RotateCw className="h-4 w-4" /> Retry
                 </button>
-                <button onClick={() => removeItem(item.id)} className="text-sm text-red-600 hover:underline flex items-center gap-2">
+                <button
+                  onClick={() => removeItem(item.id)}
+                  className="text-sm text-red-600 hover:underline flex items-center gap-2"
+                >
                   <Trash2 className="h-4 w-4" /> Remove
                 </button>
               </>
@@ -373,7 +388,10 @@ const LiteratureUploadPage: React.FC = () => {
                 >
                   <CloudLightning className="h-4 w-4" /> Start
                 </button>
-                <button onClick={() => removeItem(item.id)} className="text-sm text-red-600 hover:underline flex items-center gap-2">
+                <button
+                  onClick={() => removeItem(item.id)}
+                  className="text-sm text-red-600 hover:underline flex items-center gap-2"
+                >
                   <Trash2 className="h-4 w-4" /> Remove
                 </button>
               </>
@@ -386,7 +404,6 @@ const LiteratureUploadPage: React.FC = () => {
     );
   };
 
-  /* --- Back button helper --- */
   const goBack = () => {
     try {
       if (window.history.length > 1) {
@@ -399,7 +416,6 @@ const LiteratureUploadPage: React.FC = () => {
     }
   };
 
-  /* --- render --- */
   return (
     <div className="pt-20 p-6 space-y-6 relative">
       {/* Back button */}
@@ -419,7 +435,6 @@ const LiteratureUploadPage: React.FC = () => {
         </div>
       )}
 
-      {/* Project header */}
       {project && (
         <div className="bg-gradient-to-r from-blue-600 to-teal-500 rounded-xl text-white shadow-md p-6">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
@@ -442,7 +457,6 @@ const LiteratureUploadPage: React.FC = () => {
         </div>
       )}
 
-      {/* Upload area */}
       <div className="bg-white border rounded-xl p-6 shadow-sm">
         <div className="flex flex-col lg:flex-row gap-6">
           <div className="flex-1">
@@ -501,7 +515,6 @@ const LiteratureUploadPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Upload queue */}
       <div>
         <h3 className="text-lg font-semibold mb-3">Upload queue</h3>
         <div className="space-y-3">
@@ -512,7 +525,6 @@ const LiteratureUploadPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Upload results */}
       <div>
         <h3 className="text-lg font-semibold mb-3">Upload results</h3>
         <div className="space-y-3">

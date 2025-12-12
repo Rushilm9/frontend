@@ -1,356 +1,400 @@
-// src/pages/LiteratureDetailPage.tsx
-import React, { useEffect, useState, useRef } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
-import { BASE_URL } from "../utils/constant";
+import React, { useEffect, useState } from "react";
 import {
+  FileText,
+  BookOpen,
+  Key,
+  ArrowLeft,
   Loader2,
-  Download,
-  Trash2,
-  ChevronLeft,
-  AlertTriangle,
+  Brain,
+  Calendar,
 } from "lucide-react";
-import html2canvas from "html2canvas";
-import { jsPDF } from "jspdf";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { BASE_URL } from "../utils/constant";
 
-type ReviewResponse = {
+type LocalAnalysisData = {
+  Summary?: string;
+  Strengths?: string[];
+  Weaknesses?: string[];
+  "Research Gaps"?: string[];
+  Keywords?: string[];
+  Metadata?: {
+    "Possible Title"?: string;
+    "Authors (if mentioned)"?: string;
+    "Field / Domain"?: string;
+    "Publication Context (if inferable)"?: string;
+  };
+};
+
+type ServerPaper = {
   paper_id: number;
-  summary_text?: string;
-  strengths?: string[];
-  weaknesses?: string[];
-  gaps?: string[];
-  peer_reviewed?: boolean;
-  critique_score?: number;
+  title?: string;
+  original_text?: string;
+  summary_text: string;
+  strengths: string[];
+  weaknesses: string[];
+  gaps: string[];
+  semantic_patterns: string[];
   tone?: string;
+  critique_score?: number;
   sentiment_score?: number;
-  semantic_patterns?: string[];
+  peer_reviewed?: boolean | null;
   created_at?: string;
   message?: string;
-  title?: string;
 };
 
 const LiteratureDetailPage: React.FC = () => {
-  const { paperId } = useParams<{ paperId: string }>();
   const navigate = useNavigate();
+  const { state } = useLocation() as any;
+  const { paperId } = useParams();
 
+  const [source, setSource] = useState<"local" | "db">("local");
+  const [fileName, setFileName] = useState<string>("Untitled Paper");
   const [loading, setLoading] = useState(true);
-  const [review, setReview] = useState<ReviewResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [localAnalysis, setLocalAnalysis] = useState<LocalAnalysisData | null>(
+    null
+  );
+  const [serverData, setServerData] = useState<ServerPaper | null>(null);
+  const [activeView, setActiveView] = useState<"original" | "review">("review");
 
-  const [deleting, setDeleting] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  // ✅ Parse local AI JSON safely
+  const parseLocalAnalysis = (data: any): LocalAnalysisData | null => {
+    if (!data) return null;
+    try {
+      if (typeof data === "object") return data;
+      const jsonMatch = data.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      let parsed = JSON.parse(jsonMatch[0]);
+      if (typeof parsed === "string") parsed = JSON.parse(parsed);
+      return parsed;
+    } catch (err) {
+      console.warn("JSON parse error:", err);
+      return null;
+    }
+  };
 
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-
-  const printableRef = useRef<HTMLDivElement | null>(null);
-
+  // 🧩 Detect data source
   useEffect(() => {
-    const fetchReview = async (id: string) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`${BASE_URL}/literature/review/${id}`, {
-          headers: { accept: "application/json" },
-        });
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          throw new Error(`Server returned ${res.status}: ${text}`);
-        }
-        const data = await res.json();
-        setReview(data);
-      } catch (err: any) {
-        console.error(err);
-        setError("Failed to load literature review.");
-      } finally {
+    const fetchData = async () => {
+      // Case 1: From local
+      if (state?.analysis) {
+        setSource("local");
+        setFileName(state.name || state.fileName || "Untitled Paper");
+        const parsed = parseLocalAnalysis(state.analysis);
+        setLocalAnalysis(parsed);
         setLoading(false);
+        return;
+      }
+
+      // Case 2: From DB
+      if (paperId) {
+        setSource("db");
+        try {
+          setLoading(true);
+          const res = await fetch(`${BASE_URL}/literature/review/${paperId}`, {
+            headers: { accept: "application/json" },
+          });
+          if (!res.ok) throw new Error(`Server returned ${res.status}`);
+          const data = await res.json();
+          setServerData(data);
+          setFileName(data.title || `Paper ${data.paper_id}`);
+        } catch (err) {
+          console.error("❌ Error fetching paper:", err);
+          setServerData(null);
+        } finally {
+          setLoading(false);
+        }
       }
     };
+    fetchData();
+  }, [state, paperId]);
 
-    if (paperId) fetchReview(paperId);
-  }, [paperId]);
-
-  // Delete handler that calls API
-  const performDelete = async () => {
-    if (!review) return;
-    setDeleting(true);
-    setError(null);
-
-    try {
-      const res = await fetch(`${BASE_URL}/literature/paper/${review.paper_id}`, {
-        method: "DELETE",
-        headers: { accept: "application/json" },
-      });
-
-      const data = await res.json().catch(() => null);
-
-      if (!res.ok) {
-        throw new Error(`Delete failed: ${res.status} ${JSON.stringify(data)}`);
-      }
-
-      setSuccessMessage(data?.message ?? "Paper deleted.");
-      setShowDeleteModal(false);
-
-      navigate("/app/literature");
-    } catch (err: any) {
-      console.error("Delete error:", err);
-      setError("Failed to delete paper. Try again or check server connectivity.");
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  // Download page as PDF handler
-  const handleDownloadPdf = async () => {
-    if (!printableRef.current) return;
-    setDownloading(true);
-    setError(null);
-
-    try {
-      const canvas = await html2canvas(printableRef.current, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        windowWidth: document.documentElement.scrollWidth,
-        windowHeight: document.documentElement.scrollHeight,
-      });
-
-      const imgData = canvas.toDataURL("image/png");
-      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = pdf.internal.pageSize.getHeight();
-
-      const imgWidthMm = pdfWidth;
-      const imgHeightMm = (canvas.height / canvas.width) * imgWidthMm;
-
-      let heightLeft = imgHeightMm;
-
-      if (imgHeightMm <= pdfHeight) {
-        pdf.addImage(imgData, "PNG", 0, 0, imgWidthMm, imgHeightMm);
-      } else {
-        let y = 0;
-        while (heightLeft > 0) {
-          pdf.addImage(imgData, "PNG", 0, y, imgWidthMm, imgHeightMm);
-          heightLeft -= pdfHeight;
-          y -= pdfHeight;
-          if (heightLeft > 0) pdf.addPage();
-        }
-      }
-
-      const filename = `literature-review-${review?.paper_id ?? "paper"}.pdf`;
-      pdf.save(filename);
-    } catch (err) {
-      console.error("PDF generation failed", err);
-      setError("Failed to generate PDF. Try again.");
-    } finally {
-      setDownloading(false);
-    }
-  };
-
-  const handleBack = () => {
-    if (window.history.length > 1) {
-      navigate(-1);
-    } else {
-      navigate("/app/literature");
-    }
-  };
-
+  // 🕓 Loading state
   if (loading) {
     return (
-      <div className="pt-20 p-6">
-        <div className="flex items-center gap-2 text-gray-500">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading review...
-        </div>
+      <div className="pt-20 p-6 text-gray-500 flex items-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading paper...
       </div>
     );
   }
 
-  if (error) {
-    return <div className="pt-20 p-6 text-red-600">{error}</div>;
+  // ⚠️ No data
+  if (!localAnalysis && !serverData) {
+    return (
+      <div className="pt-20 p-6 text-gray-500">
+        No review data found. Please go back.
+      </div>
+    );
   }
 
-  if (!review) {
-    return <div className="pt-20 p-6 text-gray-500">No review found for this paper.</div>;
-  }
-
+  // ✅ UI
   return (
     <div className="pt-20 p-6 space-y-6">
-      <div className="flex justify-between items-start">
-        <div className="flex items-start gap-4">
-          <button
-            onClick={handleBack}
-            aria-label="Back"
-            className="inline-flex items-center gap-2 px-3 py-1.5 border rounded text-sm bg-white hover:bg-gray-50"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            <span>Back</span>
-          </button>
+      <button
+        onClick={() => navigate(-1)}
+        className="inline-flex items-center gap-2 px-3 py-2 border rounded text-sm hover:bg-gray-50"
+      >
+        <ArrowLeft className="h-4 w-4" /> Back
+      </button>
 
-          <div>
-            <h1 className="text-2xl font-bold">
-              {review.title ? review.title + " — " : ""}Paper {review.paper_id}
-            </h1>
-            <p className="text-sm text-gray-500">
-              {review.tone ? `${review.tone} • Critique score: ${review.critique_score ?? "—"}` : ""}
-            </p>
+      <div className="bg-white rounded-lg shadow border p-6 space-y-6 max-w-5xl mx-auto">
+        {/* Header */}
+        <div className="flex justify-between items-center border-b pb-3">
+          <div className="flex items-center gap-2">
+            <h2 className="text-2xl font-bold flex items-center gap-2">
+              <FileText className="h-5 w-5 text-blue-600" /> {fileName}
+            </h2>
+            <span
+              className={`text-sm font-medium ${
+                source === "local" ? "text-green-600" : "text-blue-600"
+              }`}
+            >
+              {source === "local" ? "Local Analysis" : "Gemini / DB Review"}
+            </span>
+          </div>
+
+          {/* Toggle View Buttons */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setActiveView("original")}
+              className={`px-4 py-2 text-sm rounded font-medium ${
+                activeView === "original"
+                  ? "bg-gray-800 text-white"
+                  : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+              }`}
+            >
+              View Original Paper
+            </button>
+            <button
+              onClick={() => setActiveView("review")}
+              className={`px-4 py-2 text-sm rounded font-medium ${
+                activeView === "review"
+                  ? "bg-blue-600 text-white"
+                  : "bg-blue-100 hover:bg-blue-200 text-blue-700"
+              }`}
+            >
+              View Review
+            </button>
           </div>
         </div>
 
-        <div className="text-right flex items-center gap-3">
-          {/* New: direct raw download API (no need to look up file_path) */}
-          <a
-            href={`${BASE_URL}/literature/paper/${review.paper_id}/download`}
-            className="inline-flex items-center gap-2 text-blue-700"
-          >
-            <Download className="h-4 w-4" /> Download original
-          </a>
-
-          <button
-            onClick={handleDownloadPdf}
-            disabled={downloading}
-            aria-label="Download page as PDF"
-            className="inline-flex items-center gap-2 px-3 py-1.5 border rounded text-sm bg-white hover:bg-gray-50"
-          >
-            {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            <span>{downloading ? "Preparing PDF..." : "Download page (PDF)"}</span>
-          </button>
-
-          <button
-            onClick={() => setShowDeleteModal(true)}
-            disabled={deleting}
-            aria-label="Delete paper"
-            className="inline-flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-700 border border-red-200 rounded text-sm hover:bg-red-100"
-          >
-            {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-            <span>{deleting ? "Deleting..." : "Delete paper"}</span>
-          </button>
-        </div>
-      </div>
-
-      {successMessage && <div className="text-green-600">{successMessage}</div>}
-
-      {/* Printable area */}
-      <div ref={printableRef} className="space-y-6">
-        {review.summary_text && (
-          <div className="bg-white border rounded p-4">
-            <h3 className="font-semibold mb-2">Summary</h3>
-            <div className="text-sm text-gray-700 whitespace-pre-wrap">{review.summary_text}</div>
+        {/* ORIGINAL PAPER */}
+        {activeView === "original" && (
+          <div className="p-4 rounded border bg-gray-50">
+            <h4 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
+              <BookOpen className="h-4 w-4 text-blue-700" /> ORIGINAL PAPER
+            </h4>
+            <p className="text-sm text-gray-700 whitespace-pre-wrap">
+              {serverData?.original_text ||
+                state?.originalText ||
+                "Original paper text not available."}
+            </p>
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white border rounded p-4">
-            <h4 className="font-semibold">Strengths</h4>
-            {review.strengths?.length ? (
-              <ul className="list-disc list-inside text-sm text-gray-700 mt-2">
-                {review.strengths.map((s, i) => (
-                  <li key={i}>{s}</li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-gray-500 mt-2">No strengths listed.</p>
+        {/* REVIEW VIEW */}
+        {activeView === "review" && (
+          <>
+            {/* Local Analysis */}
+            {source === "local" && localAnalysis && (
+              <>
+                {localAnalysis.Metadata && (
+                  <div className="p-4 rounded border bg-gray-50">
+                    <h4 className="font-semibold text-gray-800 mb-2">METADATA</h4>
+                    <p className="text-sm">
+                      <strong>Possible Title:</strong>{" "}
+                      {localAnalysis.Metadata["Possible Title"] || "N/A"}
+                    </p>
+                    <p className="text-sm">
+                      <strong>Authors:</strong>{" "}
+                      {localAnalysis.Metadata["Authors (if mentioned)"] || "N/A"}
+                    </p>
+                    <p className="text-sm">
+                      <strong>Field / Domain:</strong>{" "}
+                      {localAnalysis.Metadata["Field / Domain"] || "N/A"}
+                    </p>
+                    <p className="text-sm">
+                      <strong>Publication Context:</strong>{" "}
+                      {localAnalysis.Metadata[
+                        "Publication Context (if inferable)"
+                      ] || "N/A"}
+                    </p>
+                  </div>
+                )}
+
+                {localAnalysis.Summary && (
+                  <div className="p-4 rounded border bg-gray-50">
+                    <h4 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                      <BookOpen className="h-4 w-4 text-blue-700" /> SUMMARY
+                    </h4>
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                      {localAnalysis.Summary}
+                    </p>
+                  </div>
+                )}
+
+                {localAnalysis.Strengths && (
+                  <div className="p-4 rounded border bg-green-50">
+                    <h4 className="font-semibold text-green-700 mb-2">
+                      STRENGTHS
+                    </h4>
+                    <ul className="list-disc ml-5 text-sm text-gray-700">
+                      {localAnalysis.Strengths.map((s, i) => (
+                        <li key={i}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {localAnalysis.Weaknesses && (
+                  <div className="p-4 rounded border bg-red-50">
+                    <h4 className="font-semibold text-red-700 mb-2">
+                      WEAKNESSES
+                    </h4>
+                    <ul className="list-disc ml-5 text-sm text-gray-700">
+                      {localAnalysis.Weaknesses.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {localAnalysis["Research Gaps"] && (
+                  <div className="p-4 rounded border bg-yellow-50">
+                    <h4 className="font-semibold text-yellow-700 mb-2">
+                      RESEARCH GAPS
+                    </h4>
+                    <ul className="list-disc ml-5 text-sm text-gray-700">
+                      {localAnalysis["Research Gaps"].map((g, i) => (
+                        <li key={i}>{g}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {localAnalysis.Keywords && (
+                  <div className="p-4 rounded border bg-blue-50">
+                    <h4 className="font-semibold text-blue-700 mb-2 flex items-center gap-2">
+                      <Key className="h-4 w-4 text-blue-600" /> KEYWORDS
+                    </h4>
+                    <div className="flex flex-wrap gap-2">
+                      {localAnalysis.Keywords.map((k, i) => (
+                        <span
+                          key={i}
+                          className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full"
+                        >
+                          {k}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
-          </div>
 
-          <div className="bg-white border rounded p-4">
-            <h4 className="font-semibold">Weaknesses</h4>
-            {review.weaknesses?.length ? (
-              <ul className="list-disc list-inside text-sm text-gray-700 mt-2">
-                {review.weaknesses.map((w, i) => (
-                  <li key={i}>{w}</li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-gray-500 mt-2">No weaknesses listed.</p>
+            {/* Server (DB / Gemini) */}
+            {source === "db" && serverData && (
+              <>
+                {serverData.summary_text && (
+                  <div className="p-4 rounded border bg-gray-50">
+                    <h4 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                      <BookOpen className="h-4 w-4 text-blue-700" /> SUMMARY
+                    </h4>
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                      {serverData.summary_text}
+                    </p>
+                  </div>
+                )}
+
+                <div className="p-4 rounded border bg-green-50">
+                  <h4 className="font-semibold text-green-700 mb-2">STRENGTHS</h4>
+                  <ul className="list-disc ml-5 text-sm text-gray-700">
+                    {serverData.strengths?.length ? (
+                      serverData.strengths.map((s, i) => <li key={i}>{s}</li>)
+                    ) : (
+                      <li>None specified.</li>
+                    )}
+                  </ul>
+                </div>
+
+                <div className="p-4 rounded border bg-red-50">
+                  <h4 className="font-semibold text-red-700 mb-2">WEAKNESSES</h4>
+                  <ul className="list-disc ml-5 text-sm text-gray-700">
+                    {serverData.weaknesses?.length ? (
+                      serverData.weaknesses.map((w, i) => <li key={i}>{w}</li>)
+                    ) : (
+                      <li>None specified.</li>
+                    )}
+                  </ul>
+                </div>
+
+                <div className="p-4 rounded border bg-yellow-50">
+                  <h4 className="font-semibold text-yellow-700 mb-2">
+                    RESEARCH GAPS
+                  </h4>
+                  <ul className="list-disc ml-5 text-sm text-gray-700">
+                    {serverData.gaps?.length ? (
+                      serverData.gaps.map((g, i) => <li key={i}>{g}</li>)
+                    ) : (
+                      <li>None specified.</li>
+                    )}
+                  </ul>
+                </div>
+
+                {serverData.semantic_patterns?.length > 0 && (
+                  <div className="p-4 rounded border bg-blue-50">
+                    <h4 className="font-semibold text-blue-700 mb-2 flex items-center gap-2">
+                      <Key className="h-4 w-4 text-blue-600" /> SEMANTIC PATTERNS
+                    </h4>
+                    <div className="flex flex-wrap gap-2">
+                      {serverData.semantic_patterns.map((p, i) => (
+                        <span
+                          key={i}
+                          className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-full"
+                        >
+                          {p}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="p-4 rounded border bg-gray-50">
+                  <h4 className="font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                    <Brain className="h-4 w-4 text-purple-600" /> REVIEW METRICS
+                  </h4>
+                  <div className="grid sm:grid-cols-2 gap-2 text-sm text-gray-700">
+                    <p>
+                      <strong>Critique Score:</strong>{" "}
+                      {serverData.critique_score ?? "N/A"}
+                    </p>
+                    <p>
+                      <strong>Sentiment Score:</strong>{" "}
+                      {serverData.sentiment_score ?? "N/A"}
+                    </p>
+                    <p>
+                      <strong>Tone:</strong> {serverData.tone || "N/A"}
+                    </p>
+                    <p>
+                      <strong>Peer Reviewed:</strong>{" "}
+                      {serverData.peer_reviewed === null
+                        ? "Unknown"
+                        : serverData.peer_reviewed
+                        ? "Yes"
+                        : "No"}
+                    </p>
+                    {serverData.created_at && (
+                      <p className="flex items-center gap-1">
+                        <Calendar className="h-4 w-4 text-gray-500" />{" "}
+                        {new Date(serverData.created_at).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </>
             )}
-          </div>
-
-          <div className="bg-white border rounded p-4">
-            <h4 className="font-semibold">Gaps</h4>
-            {review.gaps?.length ? (
-              <ul className="list-disc list-inside text-sm text-gray-700 mt-2">
-                {review.gaps.map((g, i) => (
-                  <li key={i}>{g}</li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-gray-500 mt-2">No gaps listed.</p>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-white border rounded p-4">
-          <h4 className="font-semibold mb-2">Metadata</h4>
-          <div className="grid grid-cols-2 gap-2 text-sm text-gray-700">
-            <div>
-              Peer reviewed: <span className="font-medium">{review.peer_reviewed ? "Yes" : "No"}</span>
-            </div>
-            <div>
-              Critique score: <span className="font-medium">{review.critique_score ?? "—"}</span>
-            </div>
-            <div>
-              Created at: <span className="font-medium">{review.created_at ?? "—"}</span>
-            </div>
-            <div>
-              Sentiment:{" "}
-              <span className="font-medium">
-                {typeof review.sentiment_score === "number" ? review.sentiment_score : "—"}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {review.semantic_patterns?.length ? (
-          <div className="bg-white border rounded p-4">
-            <h4 className="font-semibold mb-2">Semantic Patterns / Keywords</h4>
-            <div className="flex flex-wrap gap-2">
-              {review.semantic_patterns.map((s, i) => (
-                <span key={i} className="text-sm bg-gray-100 px-3 py-1 rounded">
-                  {s}
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : null}
+          </>
+        )}
       </div>
-
-      <div className="flex gap-3">
-        <Link to="/app/literature" className="text-sm text-blue-700 hover:underline">
-          ← Back to literature list
-        </Link>
-      </div>
-
-      {/* DELETE CONFIRMATION MODAL */}
-      {showDeleteModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white w-full max-w-sm rounded-xl shadow-lg p-6 text-center">
-            <AlertTriangle className="h-10 w-10 text-red-600 mx-auto mb-3" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Paper?</h3>
-            <p className="text-sm text-gray-600 mb-6">
-              Are you sure you want to delete{" "}
-              <span className="font-medium text-gray-900">
-                {review.title ? review.title : `Paper ${review.paper_id}`}
-              </span>
-              ? This action cannot be undone.
-            </p>
-            <div className="flex justify-center space-x-3">
-              <button
-                onClick={() => setShowDeleteModal(false)}
-                className="px-4 py-2 rounded-lg text-gray-700 hover:bg-gray-100"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={performDelete}
-                disabled={deleting}
-                className="bg-red-600 hover:bg-red-700 text-white px-5 py-2 rounded-lg flex items-center justify-center space-x-2"
-              >
-                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                <span>{deleting ? "Deleting..." : "Delete"}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
